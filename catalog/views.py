@@ -1,6 +1,9 @@
+from datetime import date
+from urllib import request
 from django.shortcuts import render
 from .models import Book, Author, BookInstance, Genre
 from django.views import generic
+from django.db.models import Count, Q
 from django.contrib.auth.mixins import LoginRequiredMixin
 
 def index(request):
@@ -26,6 +29,7 @@ def index(request):
         'num_authors': num_authors,
         'num_books_word': num_books_word,
         'num_genres_word': num_genres_word,
+        'num_visits': num_visits,
     }
 
     return render(request, 'index.html', context=context)
@@ -35,8 +39,8 @@ class BookListView(generic.ListView):
 
     paginate_by = 10
 
-    def get_queryset(self):
-        return Book.objects.filter(title__icontains='war')[:5] # Get 5 books containing the title war
+    # def get_queryset(self):
+    #     return Book.objects.filter(title__icontains='war')[:5] # Get 5 books containing the title war
     
     def get_context_data(self, **kwargs):
         context = super(BookListView, self).get_context_data(**kwargs)
@@ -52,6 +56,37 @@ class AuthorListView(generic.ListView):
 
 class AuthorDetailView(generic.DetailView):
     model = Author
+    template_name = 'catalog/author_detail.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        all_genres = set()
+        all_languages = set()
+
+        books = Book.objects.filter(author=self.object).prefetch_related('genre', 'language')
+
+        for book in books:
+            for genre in book.genre.all():
+                all_genres.add(genre.name)
+
+            all_languages.add(book.language.name)
+
+        books_with_status_counts = books.annotate(
+            total_instances=Count('bookinstance'),
+            available=Count('bookinstance', filter=Q(bookinstance__status='a')),
+            on_loan=Count('bookinstance', filter=Q(bookinstance__status='o')),
+            reserved=Count('bookinstance', filter=Q(bookinstance__status='r')),
+            maintenance=Count('bookinstance', filter=Q(bookinstance__status='m')),
+            overdue=Count('bookinstance', filter=Q(bookinstance__status='o', bookinstance__due_back__lt=date.today())),
+        )
+        
+        context['genres'] = list(all_genres)
+        context['languages'] = list(all_languages)
+        context['books_with_status_counts'] = books_with_status_counts
+
+        return context
+
 
 class LoanedBooksByUserListView(LoginRequiredMixin,generic.ListView):
     """Generic class-based view listing books on loan to current user."""
